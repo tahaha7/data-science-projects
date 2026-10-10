@@ -1,16 +1,22 @@
 """
-Customer Churn Prediction
-=========================
-Predicts which telecom customers are likely to churn (cancel their
-subscription) using synthetic customer data.
+Customer Churn Prediction — Telco Dataset
+=========================================
+Predicts which telecom customers are likely to churn using the classic
+Telco Customer Churn dataset (7,043 customers).
+
+Dataset: https://huggingface.co/datasets/sanjaycusat/telco-customer-churn3
+(WA_Fn-UseC_-Telco-Customer-Churn.csv — the well-known Kaggle dataset,
+mirrored on Hugging Face). Downloaded automatically on first run.
 
 Pipeline:
-  1. Generate a realistic synthetic telecom dataset
-  2. Exploratory data analysis (churn rate, distributions)
-  3. Feature engineering + preprocessing
+  1. Download + clean the dataset (fix TotalCharges blanks, encode target)
+  2. Exploratory analysis (churn rate, key segments)
+  3. Preprocessing: scale numerics, one-hot encode categoricals
   4. Train & compare: Logistic Regression, Random Forest, Gradient Boosting
-  5. Evaluate with ROC-AUC, PR-AUC, confusion matrix, feature importance
-  6. Save plots and a model-comparison CSV to artifacts/
+     with 5-fold cross-validated ROC-AUC
+  5. Evaluate: ROC-AUC, PR-AUC, ROC/PR curves, confusion matrix,
+     classification report, feature importances
+  6. Save plots + model_comparison.csv to artifacts/
 
 Run:
     pip install -r requirements.txt
@@ -18,6 +24,7 @@ Run:
 """
 
 from pathlib import Path
+import urllib.request
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -34,50 +41,36 @@ from sklearn.metrics import (roc_auc_score, average_precision_score, confusion_m
                              classification_report, RocCurveDisplay, PrecisionRecallDisplay)
 
 ARTIFACTS = Path(__file__).resolve().parent / "artifacts"
+DATA_PATH = Path(__file__).resolve().parent / "telco_churn.csv"
+DATA_URL = ("https://huggingface.co/datasets/sanjaycusat/telco-customer-churn3/"
+            "resolve/main/WA_Fn-UseC_-Telco-Customer-Churn.csv")
 RANDOM_STATE = 42
-N_SAMPLES = 5000
 
 
-def generate_data(n=N_SAMPLES, seed=RANDOM_STATE):
-    """Build a synthetic telecom customer dataset with realistic churn drivers."""
-    rng = np.random.default_rng(seed)
-    tenure = rng.integers(1, 73, n)
-    monthly = np.round(rng.uniform(20, 120, n), 2)
-    total = np.round(monthly * tenure * rng.uniform(0.9, 1.1, n), 2)
-    contract = rng.choice(["Month-to-month", "One year", "Two year"], n, p=[0.45, 0.30, 0.25])
-    paperless = rng.choice(["Yes", "No"], n, p=[0.6, 0.4])
-    payment = rng.choice(["Electronic check", "Mailed check", "Bank transfer", "Credit card"],
-                         n, p=[0.35, 0.2, 0.2, 0.25])
-    internet = rng.choice(["Fiber optic", "DSL", "No"], n, p=[0.45, 0.35, 0.20])
-    support = rng.choice(["Yes", "No"], n, p=[0.35, 0.65])
-    senior = rng.choice([0, 1], n, p=[0.8, 0.2])
+def load_data():
+    if not DATA_PATH.exists():
+        print("Downloading Telco Customer Churn dataset...")
+        urllib.request.urlretrieve(DATA_URL, DATA_PATH)
+    df = pd.read_csv(DATA_PATH)
 
-    # Churn probability driven by known risk factors + noise
-    logit = (-1.6
-             - 0.035 * tenure
-             + 0.012 * monthly
-             + 0.9 * (contract == "Month-to-month")
-             - 0.5 * (contract == "Two year")
-             + 0.4 * (internet == "Fiber optic")
-             - 0.45 * (support == "Yes")
-             + 0.3 * (payment == "Electronic check")
-             + 0.25 * senior
-             + rng.normal(0, 0.5, n))
-    prob = 1 / (1 + np.exp(-logit))
-    churn = (rng.random(n) < prob).astype(int)
+    # TotalCharges has blank strings for zero-tenure customers — coerce to numeric
+    df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
+    df["TotalCharges"] = df["TotalCharges"].fillna(0)
 
-    return pd.DataFrame({
-        "tenure": tenure, "MonthlyCharges": monthly, "TotalCharges": total,
-        "Contract": contract, "PaperlessBilling": paperless, "PaymentMethod": payment,
-        "InternetService": internet, "TechSupport": support, "SeniorCitizen": senior,
-        "Churn": churn,
-    })
+    df = df.drop(columns=["customerID"])
+    df["Churn"] = (df["Churn"] == "Yes").astype(int)
+    return df
 
 
 def main():
     ARTIFACTS.mkdir(exist_ok=True)
-    df = generate_data()
-    print(f"Dataset: {df.shape[0]} customers, churn rate = {df['Churn'].mean():.1%}")
+    df = load_data()
+    print(f"Dataset: {df.shape[0]} customers, {df.shape[1]-1} features, "
+          f"churn rate = {df['Churn'].mean():.1%}")
+
+    # Quick EDA: churn by contract type
+    print("\nChurn rate by contract:")
+    print(df.groupby("Contract")["Churn"].mean().round(3).to_string())
 
     X = df.drop(columns=["Churn"])
     y = df["Churn"]
@@ -126,7 +119,6 @@ def main():
     print(classification_report(y_test, best_pipe.predict(X_test),
                                 target_names=["Stayed", "Churned"]))
 
-    # ROC + PR curves
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     for name, (_, proba) in fitted.items():
         RocCurveDisplay.from_predictions(y_test, proba, name=name, ax=axes[0])
@@ -134,7 +126,6 @@ def main():
     axes[0].set_title("ROC Curves"); axes[1].set_title("Precision-Recall Curves")
     fig.tight_layout(); fig.savefig(ARTIFACTS / "roc_pr_curves.png", dpi=120); plt.close(fig)
 
-    # Confusion matrix (best model)
     cm = confusion_matrix(y_test, best_pipe.predict(X_test))
     fig, ax = plt.subplots(figsize=(5, 4))
     im = ax.imshow(cm, cmap="Blues")
@@ -149,19 +140,16 @@ def main():
     fig.colorbar(im); fig.tight_layout()
     fig.savefig(ARTIFACTS / "confusion_matrix.png", dpi=120); plt.close(fig)
 
-    # Feature importance (best tree model if available)
-    tree_model = fitted.get("RandomForest", fitted.get("GradientBoosting"))
-    if tree_model:
-        pipe = tree_model[0]
-        feat_names = pipe.named_steps["prep"].get_feature_names_out()
-        importances = pipe.named_steps["clf"].feature_importances_
-        top = pd.Series(importances, index=feat_names).sort_values(ascending=False).head(12)
-        fig, ax = plt.subplots(figsize=(9, 6))
-        top.sort_values().plot(kind="barh", ax=ax, color="#1f6feb")
-        ax.set_title("Top 12 Feature Importances — RandomForest")
-        ax.set_xlabel("Importance")
-        fig.tight_layout(); fig.savefig(ARTIFACTS / "feature_importance.png", dpi=120); plt.close(fig)
-        print("\nTop churn drivers:\n" + top.to_string())
+    rf_pipe, _ = fitted["RandomForest"]
+    feat_names = rf_pipe.named_steps["prep"].get_feature_names_out()
+    importances = rf_pipe.named_steps["clf"].feature_importances_
+    top = pd.Series(importances, index=feat_names).sort_values(ascending=False).head(12)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    top.sort_values().plot(kind="barh", ax=ax, color="#1f6feb")
+    ax.set_title("Top 12 Feature Importances — RandomForest")
+    ax.set_xlabel("Importance")
+    fig.tight_layout(); fig.savefig(ARTIFACTS / "feature_importance.png", dpi=120); plt.close(fig)
+    print("\nTop churn drivers:\n" + top.to_string())
 
     print(f"\nArtifacts saved to {ARTIFACTS}/")
 
