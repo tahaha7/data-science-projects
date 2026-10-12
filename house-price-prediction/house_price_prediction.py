@@ -1,26 +1,6 @@
-"""
-California House Price Prediction
-=================================
-Predicts median house prices (in $100k) for California districts using the
-1990 US Census California Housing dataset (20,640 districts, 8 features).
-
-Dataset: https://scikit-learn.org/stable/datasets/real_world.html#california-housing-dataset
-(sklearn.datasets.fetch_california_housing — downloaded automatically on first run)
-
-Pipeline:
-  1. Load dataset (auto-download via sklearn fetch)
-  2. EDA: distributions, correlation heatmap, geographic scatter
-  3. Preprocessing: median-impute + standardize features (Pipeline)
-  4. Train & compare: Ridge, Lasso, Random Forest, Gradient Boosting
-     with 5-fold cross-validated RMSE / R²
-  5. Winner evaluation: residual analysis, predicted-vs-actual plot,
-     feature importances
-  6. Save plots + model_comparison.csv to artifacts/
-
-Run:
-    pip install -r requirements.txt
-    python house_price_prediction.py
-"""
+# House price prediction on the California Housing dataset (20640 districts, 1990 census).
+# Tries 4 models - Ridge, Lasso, Random Forest, Gradient Boosting -
+# and compares them with 5-fold CV RMSE. Run: python house_price_prediction.py
 
 from pathlib import Path
 import numpy as np
@@ -52,7 +32,7 @@ MODEL_SPECS = {
 
 
 def load_data():
-    """Fetch California Housing (auto-downloads on first run)."""
+    # downloads automatically the first time
     print("Loading California Housing dataset (downloads on first run)...")
     data = fetch_california_housing(as_frame=True)
     df = data.frame.copy()
@@ -61,16 +41,16 @@ def load_data():
 
 
 def eda(df, target, features):
-    """Exploratory plots: target distribution, correlation, geography."""
+    # some quick plots to understand the data
     ARTIFACTS.mkdir(exist_ok=True)
 
-    # 1. Target distribution
+    # target distribution
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
     axes[0].hist(df[target], bins=50, color="#58a6ff", edgecolor="black", alpha=0.8)
     axes[0].set_xlabel("Median house value ($100k)")
     axes[0].set_ylabel("Districts")
     axes[0].set_title("Distribution of house values")
-    # clipped at 5.0 ($500k cap in the 1990 census data)
+    # values are capped at 5.0 ($500k) in the census data
     axes[1].boxplot(df[target].sample(min(3000, len(df)), random_state=RANDOM_STATE))
     axes[1].set_ylabel("Median house value ($100k)")
     axes[1].set_title("Target boxplot (note the $500k cap)")
@@ -78,7 +58,7 @@ def eda(df, target, features):
     fig.savefig(ARTIFACTS / "target_distribution.png", dpi=150)
     plt.close(fig)
 
-    # 2. Correlation heatmap (features + target)
+    # correlation heatmap
     corr = df.corr(numeric_only=True)
     fig, ax = plt.subplots(figsize=(9, 7))
     im = ax.imshow(corr.values, cmap="coolwarm", vmin=-1, vmax=1)
@@ -91,7 +71,7 @@ def eda(df, target, features):
     fig.savefig(ARTIFACTS / "correlation.png", dpi=150)
     plt.close(fig)
 
-    # 3. Geographic scatter colored by price
+    # map of prices by location
     sample = df.sample(min(8000, len(df)), random_state=RANDOM_STATE)
     fig, ax = plt.subplots(figsize=(10, 8))
     sc = ax.scatter(sample["Longitude"], sample["Latitude"], c=sample[target],
@@ -103,13 +83,12 @@ def eda(df, target, features):
     fig.savefig(ARTIFACTS / "geography.png", dpi=150)
     plt.close(fig)
 
-    # capped values
     capped = (df[target] >= 5.0).mean()
     print(f"  {capped:.1%} of districts hit the $500k collection cap (target clipped)")
 
 
 def build_pipelines():
-    """Median-impute + standardize, then model — inside each pipeline."""
+    # impute + scale inside each pipeline so there's no leakage
     return {
         name: Pipeline([
             ("impute", SimpleImputer(strategy="median")),
@@ -120,7 +99,7 @@ def build_pipelines():
 
 
 def compare_models(X_train, y_train):
-    """5-fold CV RMSE for every model."""
+    # 5-fold CV RMSE for each model
     cv = KFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
     results = {}
     for name, pipe in build_pipelines().items():
@@ -134,7 +113,7 @@ def compare_models(X_train, y_train):
 
 
 def evaluate_winner(name, X_train, X_test, y_train, y_test, features):
-    """Fit the winner on train, evaluate on test, plot diagnostics."""
+    # fit the winner on train, check it on test, save some plots
     pipe = build_pipelines()[name]
     pipe.fit(X_train, y_train)
     pred = pipe.predict(X_test)
@@ -144,7 +123,7 @@ def evaluate_winner(name, X_train, X_test, y_train, y_test, features):
     r2 = r2_score(y_test, pred)
     print(f"\nWinner: {name}  |  Test RMSE={rmse:.4f}  MAE={mae:.4f}  R²={r2:.4f}")
 
-    # Predicted vs actual
+    # predicted vs actual
     fig, ax = plt.subplots(figsize=(7, 7))
     ax.scatter(y_test, pred, s=4, alpha=0.25, color="#58a6ff")
     lims = [0, 5.2]
@@ -157,7 +136,7 @@ def evaluate_winner(name, X_train, X_test, y_train, y_test, features):
     fig.savefig(ARTIFACTS / "predicted_vs_actual.png", dpi=150)
     plt.close(fig)
 
-    # Residuals
+    # residuals
     resid = y_test - pred
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     axes[0].scatter(pred, resid, s=4, alpha=0.25, color="#f0883e")
@@ -171,7 +150,7 @@ def evaluate_winner(name, X_train, X_test, y_train, y_test, features):
     fig.savefig(ARTIFACTS / "residuals.png", dpi=150)
     plt.close(fig)
 
-    # Feature importances (tree models expose them)
+    # which features matter most
     model = pipe.named_steps["model"]
     if hasattr(model, "feature_importances_"):
         imp = pd.Series(model.feature_importances_, index=features).sort_values()
