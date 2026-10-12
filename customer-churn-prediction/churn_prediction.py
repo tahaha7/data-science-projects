@@ -1,27 +1,6 @@
-"""
-Customer Churn Prediction — Telco Dataset
-=========================================
-Predicts which telecom customers are likely to churn using the classic
-Telco Customer Churn dataset (7,043 customers).
-
-Dataset: https://huggingface.co/datasets/sanjaycusat/telco-customer-churn3
-(WA_Fn-UseC_-Telco-Customer-Churn.csv — the well-known Kaggle dataset,
-mirrored on Hugging Face). Downloaded automatically on first run.
-
-Pipeline:
-  1. Download + clean the dataset (fix TotalCharges blanks, encode target)
-  2. Exploratory analysis (churn rate, key segments)
-  3. Preprocessing: scale numerics, one-hot encode categoricals
-  4. Train & compare: Logistic Regression, Random Forest, Gradient Boosting
-     with 5-fold cross-validated ROC-AUC
-  5. Evaluate: ROC-AUC, PR-AUC, ROC/PR curves, confusion matrix,
-     classification report, feature importances
-  6. Save plots + model_comparison.csv to artifacts/
-
-Run:
-    pip install -r requirements.txt
-    python churn_prediction.py
-"""
+# Customer churn prediction on the Telco dataset (7043 customers).
+# Tries 3 models - Logistic Regression, Random Forest, Gradient Boosting -
+# and compares them using ROC-AUC. Run: python churn_prediction.py
 
 from pathlib import Path
 import urllib.request
@@ -48,17 +27,17 @@ RANDOM_STATE = 42
 
 
 def load_data():
+    # download the csv if we don't have it yet
     if not DATA_PATH.exists():
         print("Downloading Telco Customer Churn dataset...")
         urllib.request.urlretrieve(DATA_URL, DATA_PATH)
     df = pd.read_csv(DATA_PATH)
 
-    # TotalCharges has blank strings for zero-tenure customers — coerce to numeric
-    df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
-    df["TotalCharges"] = df["TotalCharges"].fillna(0)
+    # TotalCharges has some blanks (new customers), fill with 0
+    df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce").fillna(0)
 
-    df = df.drop(columns=["customerID"])
-    df["Churn"] = (df["Churn"] == "Yes").astype(int)
+    df = df.drop(columns=["customerID"])  # id column, not useful for prediction
+    df["Churn"] = (df["Churn"] == "Yes").astype(int)  # 1 = churned, 0 = stayed
     return df
 
 
@@ -68,7 +47,7 @@ def main():
     print(f"Dataset: {df.shape[0]} customers, {df.shape[1]-1} features, "
           f"churn rate = {df['Churn'].mean():.1%}")
 
-    # Quick EDA: churn by contract type
+    # quick look: churn rate by contract type
     print("\nChurn rate by contract:")
     print(df.groupby("Contract")["Churn"].mean().round(3).to_string())
 
@@ -77,6 +56,7 @@ def main():
     num_cols = ["tenure", "MonthlyCharges", "TotalCharges", "SeniorCitizen"]
     cat_cols = [c for c in X.columns if c not in num_cols]
 
+    # scale the numbers, one-hot encode the categories
     preprocess = ColumnTransformer([
         ("num", StandardScaler(), num_cols),
         ("cat", OneHotEncoder(handle_unknown="ignore"), cat_cols),
@@ -119,6 +99,7 @@ def main():
     print(classification_report(y_test, best_pipe.predict(X_test),
                                 target_names=["Stayed", "Churned"]))
 
+    # ROC and PR curves for all three models
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     for name, (_, proba) in fitted.items():
         RocCurveDisplay.from_predictions(y_test, proba, name=name, ax=axes[0])
@@ -126,6 +107,7 @@ def main():
     axes[0].set_title("ROC Curves"); axes[1].set_title("Precision-Recall Curves")
     fig.tight_layout(); fig.savefig(ARTIFACTS / "roc_pr_curves.png", dpi=120); plt.close(fig)
 
+    # confusion matrix of the best model
     cm = confusion_matrix(y_test, best_pipe.predict(X_test))
     fig, ax = plt.subplots(figsize=(5, 4))
     im = ax.imshow(cm, cmap="Blues")
@@ -140,6 +122,7 @@ def main():
     fig.colorbar(im); fig.tight_layout()
     fig.savefig(ARTIFACTS / "confusion_matrix.png", dpi=120); plt.close(fig)
 
+    # which features matter most (using random forest)
     rf_pipe, _ = fitted["RandomForest"]
     feat_names = rf_pipe.named_steps["prep"].get_feature_names_out()
     importances = rf_pipe.named_steps["clf"].feature_importances_
