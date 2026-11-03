@@ -1,0 +1,8 @@
+scikit-learn>=1.3
+pandas>=2.0
+numpy>=1.26
+matplotlib>=3.8
+datasets>=2.14
+# Optional, only for the --bert fine-tune path:
+# torch>=2.0
+# transformers>=4.35
